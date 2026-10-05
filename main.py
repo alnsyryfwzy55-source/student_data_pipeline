@@ -1,3 +1,5 @@
+import os
+import pandas as pd
 from pathlib import Path
 import time
 
@@ -7,11 +9,15 @@ from app.sources.database_source import extract_database
 from app.validation.quality import (
     validate_student_source, validate_api_source,
     validate_database_source, validate_final_data,
+    validate_mongodb_source, validate_web_source
 )
-from app.transformation.cleaner import clean_students, clean_api
+from app.transformation.cleaner import clean_students, clean_api, clean_mongodb, clean_web
 from app.transformation.integration import integrate_data, add_derived_columns
 from app.output.csv_writer import save_processed_data, save_rejected_data
 from app.utils.logger import setup_logger
+
+from app.sources.mongodb_source import extract_mongodb
+from app.sources.web_scraper_source import extract_web
 
 BASE = Path(__file__).resolve().parent
 logger = setup_logger(BASE / "logs/pipeline.log")
@@ -30,16 +36,56 @@ def run_pipeline():
     db_raw = extract_database(BASE / "database/students.db")
     logger.info("Database records: %d", len(db_raw))
 
+    web_raw = extract_web(html_path=BASE / "data/raw/students_web.html")
+
+    mongo_uri = os.getenv("MONGO_URI")
+
+    mongo_raw = pd.DataFrame()
+
+    if mongo_uri:
+        mongo_raw = extract_mongodb(
+            mongo_uri,
+            os.getenv(
+                "MONGO_DATABASE",
+                "student_pipeline",
+            ),
+            os.getenv(
+                "MONGO_COLLECTION",
+                "students",
+            ),
+        )
+    else:
+        logger.warning(
+            "MONGO_URI is not configured; "
+            "MongoDB source is skipped"
+        )
     logger.info("Source validation started")
     csv_valid, csv_rej = validate_student_source(csv_raw)
     api_valid, api_rej = validate_api_source(api_raw)
     db_valid, db_rej = validate_database_source(db_raw)
+    mongo_valid, mongo_rej = validate_mongodb_source(mongo_raw)
+    web_valid, web_rej = validate_web_source(web_raw)
 
     csv_valid = clean_students(csv_valid)
     api_valid = clean_api(api_valid)
+    web_valid = clean_web(web_valid)
+
+    if not mongo_raw.empty:
+        mongo_valid = clean_mongodb(
+            mongo_valid
+        )
+
+    else:
+        mongo_valid = None
 
     logger.info("Transformation and integration started")
-    integrated = integrate_data(csv_valid, api_valid, db_valid)
+    integrated = integrate_data(
+    csv_valid,
+    api_valid,
+    db_valid,
+    mongo_valid,
+    web_valid,)
+
     transformed = add_derived_columns(integrated)
 
     # Add cross-source compatibility validation.
@@ -57,13 +103,22 @@ def run_pipeline():
     final = validate_final_data(transformed)
     logger.info("Final validation completed")
 
-    rejected = (
-        __import__("pandas").concat(
-            [csv_rej, api_rej, db_rej, compatibility_rej],
-            ignore_index=True,
-        )
-        .drop_duplicates()
-    )
+    rejected = pd.concat(
+    [
+        csv_rej,
+        api_rej,
+        db_rej,
+        mongo_rej,
+        web_rej,
+    ],ignore_index=True,).drop_duplicates()
+    
+    # rejected = (
+    #     __import__("pandas").concat(
+    #         [csv_rej, api_rej, db_rej, compatibility_rej],
+    #         ignore_index=True,
+    #     )
+    #     .drop_duplicates()
+    # )
     save_processed_data(final, BASE / "data/processed/final_dataset.csv")
     save_rejected_data(rejected, BASE / "data/rejected/rejected_records.csv")
 
