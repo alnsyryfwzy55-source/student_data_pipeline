@@ -1,5 +1,6 @@
 from pathlib import Path
 import json
+import logging
 import pandas as pd
 import requests
 
@@ -17,6 +18,8 @@ def extract_api(url: str | None = None, mock_path: str | Path | None = None,
         except (requests.RequestException, ValueError) as exc:
             if mock_path is None:
                 raise RuntimeError(f"API extraction failed: {exc}") from exc
+            logging.getLogger("student_data_pipeline").warning(
+                "API request failed (%s); using local mock", exc)
 
     if mock_path is None:
         raise RuntimeError("No API URL or mock source configured")

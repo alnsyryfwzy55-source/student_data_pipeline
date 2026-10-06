@@ -14,8 +14,7 @@ logs/*.log
 # Generated pipeline outputs
 data/processed/*
 data/rejected/*
+data/ml/*
 
-# Local MongoDB / database files
+# Local MongoDB data
 mongodb_data/
-
-scripts/

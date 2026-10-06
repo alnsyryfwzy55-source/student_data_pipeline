@@ -1,150 +1,104 @@
 # Student Data Pipeline
 
 ## Project Overview
-A Python Data Engineering ETL/Integration pipeline that combines student data from multiple heterogeneous sources:
+A Python Data Engineering ETL pipeline that combines student data from five heterogeneous sources and produces both an analysis-ready dataset and a machine-learning-ready feature table:
 
-1. CSV
-2. REST API / JSON
-3. SQLite
-4. MongoDB
-5. Web Scraping
-
-The pipeline extracts, validates, cleans, integrates, transforms, performs final validation, and loads the final dataset.
+1. CSV (`data/raw/students.csv`)
+2. REST API / JSON (`data/raw/api_mock.json` fallback)
+3. SQLite (`database/students.db`)
+4. MongoDB (`data/raw/mongodb_students.json` fallback)
+5. Web scraping (`data/raw/students_web.html` fallback)
 
 ## Architecture
-CSV ───────────────┐
-REST API / JSON ───┤
-SQLite ────────────┤
-MongoDB ───────────┤
-Web Scraping ──────┘
-          |
-          v
-       Extract
-          |
-          v
-       Validate
-          |
-          v
-         Clean
-          |
-          v
-       Integrate
-          |
-          v
-       Transform
-          |
-          v
-   Final Validation
-       /       \
-      v         v
- Valid Data   Rejected Data
-     |             |
-     v             v
-final_dataset  rejected_records
+```text
+CSV ──────────┐
+REST API ─────┤
+SQLite ───────┼─> Extract -> Validate -> Clean -> Integrate -> Transform
+MongoDB ──────┤                                                  |
+Web scraping ─┘                                                  v
+                                                          Final Validation
+                                                     /          |          \
+                                                    v           v           v
+                                         final_dataset.csv  rejected_    ml_ready_dataset.csv
+                                                           records.csv   + feature_schema.json
+```
 
 ## Project Structure
+```text
 student_data_pipeline/
 ├── app/
-│   ├── sources/
-│   │   ├── api_source.py
-│   │   ├── mongodb_source.py
-│   │   ├── web_scraper_source.py
-│   │   └── ...
-│   ├── transformation/
-│   ├── validation/
-│   ├── output/
-│   └── utils/
+│   ├── sources/          csv, api, database, mongodb, web scraper
+│   ├── validation/       per-source and final quality rules
+│   ├── transformation/   cleaning, integration, derived columns
+│   ├── ml/               ML-ready feature preparation
+│   ├── output/           CSV writers
+│   └── utils/            logger
 ├── data/
-│   ├── raw/
-│   │   ├── students.csv
-│   │   ├── api_mock.json
-│   │   ├── mongodb_students.json
-│   │   └── students_web.html
-│   ├── processed/
-│   └── rejected/
-├── database/
-├── scripts/
-│   └── seed_mongodb.py
+│   ├── raw/              source files and offline fixtures
+│   ├── processed/        final_dataset.csv        (generated)
+│   ├── rejected/         rejected_records.csv     (generated)
+│   └── ml/               ml_ready_dataset.csv, feature_schema.json (generated)
+├── database/             students.db (SQLite)
+├── docs/                 data_dictionary.md
+├── scripts/              seed_mongodb.py
 ├── tests/
-├── logs/
+├── .github/workflows/    CI
+├── docker-compose.yml    local MongoDB
+├── .env.example
 ├── main.py
-├── requirements.txt
-├── .gitignore
-└── README.md
+└── requirements.txt
+```
 
 ## Data Sources
-### CSV
-`data/raw/students.csv` contains basic student information.
+| Source | Provides | Live configuration | Offline fallback |
+|---|---|---|---|
+| CSV | name, age, major, city | file | - |
+| REST API | gpa, attendance, status | `API_URL` | `data/raw/api_mock.json` |
+| SQLite | courses, semester, score (SQL JOIN) | file | - |
+| MongoDB | credit_hours, enrollment_status | `MONGO_URI`, `MONGO_DATABASE`, `MONGO_COLLECTION` | `data/raw/mongodb_students.json` |
+| Web scraping | scholarship (HTML table via BeautifulSoup) | `WEB_SOURCE_URL` | `data/raw/students_web.html` |
 
-### REST API
-`app/sources/api_source.py` supports a real REST endpoint using `requests`.  
-For offline/reproducible execution, the project includes `data/raw/api_mock.json`.
+When a live source is not configured or fails, the pipeline logs it and uses the local fixture, so runs are reproducible offline. Credentials are only read from environment variables (see `.env.example`); never commit them.
 
-### SQLite
-`database/students.db` contains `courses` and `enrollments`. Data is extracted using SQL JOIN.
-
-### MongoDB
-
-`app/sources/mongodb_source.py` extracts student documents from a MongoDB collection using `pymongo`.
-
-MongoDB connection settings are read from environment variables:
-
-- `MONGO_URI`
-- `MONGO_DATABASE`
-- `MONGO_COLLECTION`
-
-The MongoDB source provides additional student attributes such as `credit_hours` and `enrollment_status`.
-
-MongoDB credentials and connection strings are not stored in the source code.
-
-### Web Scraping
-
-`app/sources/web_scraper_source.py` extracts student data from an HTML table using `requests` and `BeautifulSoup`.
-
-The scraper supports both:
-
-- A real web URL.
-- A local HTML fixture for offline and reproducible testing.
-
-The local fixture is stored in:
-
-`data/raw/students_web.html`
+### Running MongoDB locally (optional)
+```bash
+docker compose up -d
+export MONGO_URI=mongodb://localhost:27017
+python scripts/seed_mongodb.py
+python main.py
+```
 
 ## ETL Pipeline
-- **Extract:** read CSV, request JSON API, query SQLite.
-- **Validate:** enforce student ID, age, GPA, attendance and score rules.
-- **Clean:** normalize text, whitespace and data types; apply documented missing-value strategies.
-- **Integrate:** join sources using `student_id`.
-- **Transform:** create `performance_level` and `attendance_status`.
-- **Load:** write final and rejected CSV files.
+- **Extract:** CSV, REST API, SQLite query, MongoDB, HTML table.
+- **Validate:** per-source rules (below) plus a final gate; rejected rows are never dropped silently.
+- **Clean:** normalise text, majors (e.g. `AI` -> `Artificial Intelligence`), types and missing values.
+- **Integrate:** CSV, API and SQLite are required (inner join on `student_id`); MongoDB and web data are enrichment (left join), so a student missing from them is kept. Overlapping web columns are compared with the CSV (conflicts are logged) instead of duplicated.
+- **Transform:** `performance_level`, `attendance_status`, `academic_load`.
+- **ML preparation:** see below.
+- **Load:** final, rejected and ML-ready files.
 
 ## Data Quality Rules
-- `student_id` cannot be NULL.
-- `student_id` must be unique within the student source.
-- `age` must be 16–80.
-- `gpa` must be 0–4.
-- `attendance` must be 0–100.
-- `score` must be 0–100.
-- IDs must be compatible across sources.
-- Invalid records are written to `data/rejected/rejected_records.csv`.
+- `student_id` cannot be NULL and must be unique within each source (first record kept).
+- `age` 16-80, `gpa` 0-4, `attendance` 0-100, `score` 0-100, `credit_hours` 0-30.
+- A student valid in some required sources but missing from others is rejected as `Incompatible student_id`.
+- Final gate: any row failing the range rules is written to the rejected file with the reason.
+- `rejected_records.csv` columns: `student_id`, `source`, `error_reason`.
 
 ## Missing Values
-- Missing student age: median of the available valid ages in the student source.
-- Missing GPA: median of available valid GPA values from the API source.
-- Missing attendance is not silently fabricated; a missing attendance value cannot pass final validation.
+- Missing age: median of valid ages in the student source (stored as integer).
+- Missing GPA: median of valid GPA values from the API source.
+- Missing attendance or score is not fabricated; such a row is rejected by the final validation.
+- Missing MongoDB/web data leaves `credit_hours`, `enrollment_status`, `scholarship` empty (enrichment only).
 
-## MongoDB Configuration
+## ML-Ready Output
+`data/ml/ml_ready_dataset.csv` is fully numeric with no missing values:
+- identifiers (`student_id`, `student_name`) removed;
+- `gpa` removed because the target `performance_level` is derived from it (target leakage);
+- numeric features standardised (z-score); the means/standard deviations are saved in `data/ml/feature_schema.json` so new data can be scaled identically;
+- categoricals one-hot encoded, `course` expanded to one column per course, `scholarship` as 0/1.
 
-MongoDB configuration is provided through environment variables.
+Note: the bundled sample is tiny (7 rows) and only demonstrates the format; train/test splitting should be done on real data volumes. Column descriptions: `docs/data_dictionary.md`.
 
-Example:
-
-```text
-MONGO_URI=mongodb://localhost:27017
-MONGO_DATABASE=student_pipeline
-MONGO_COLLECTION=students
-
-```
 ## Installation
 ```bash
 python -m venv .venv
@@ -165,11 +119,15 @@ python main.py
 ```bash
 pytest -q
 ```
+Tests write pipeline outputs to a temporary directory and do not modify the repository. CI runs them on every push.
 
 ## Output
 - `data/processed/final_dataset.csv`
 - `data/rejected/rejected_records.csv`
+- `data/ml/ml_ready_dataset.csv`, `data/ml/feature_schema.json`
 - `logs/pipeline.log`
+
+(Generated files are git-ignored.)
 
 ## Questions
 ### 1. لماذا نحتاج إلى Pipeline Data عند التعامل مع مصادر متعددة؟
@@ -194,24 +152,12 @@ Extract استخراج البيانات من المصادر، Transform تحوي
 يتم اكتشافها بقواعد الجودة وتسجيل سبب الرفض في `rejected_records.csv`.
 
 ### 8. لماذا يجب فصل طبقة Extraction عن Transformation؟
-حتى تبقى مسؤولية كل طبقة واضحة ويمكن تغيير مصدر البيانات دون إعادة كتابة منطق التنظيف والتحويل.
+حتى تبقى مسؤولية كل طبقة واضحة ويمكن تغيير مصدر البيانات أو إضافة مصدر جديد (مثل MongoDB أو Web Scraping) دون إعادة كتابة منطق التنظيف والتحويل.
 
 ### 9. لماذا يعتبر Validation Data جزءًا أساسيًا من هندسة البيانات؟
 لأن جودة البيانات الداخلة تؤثر مباشرة على صحة التحليل والنماذج والقرارات المبنية عليها.
-## Web Scraping
-
-The web scraper can operate against a real URL or a local HTML fixture.
-
-For reproducible offline testing, the project uses:
-
-```text
-data/raw/students_web.html
-```
-
 ### 10. كيف يمكن تطوير Pipeline ليعمل بشكل دوري وآلي؟
 يمكن تشغيله بواسطة scheduler مثل cron أو Windows Task Scheduler أو نظام orchestration.
-
-حتى تبقى مسؤولية كل طبقة واضحة. يمكن إضافة مصدر جديد مثل MongoDB أو Web Scraping دون إعادة كتابة منطق التنظيف والتحويل والتكامل بالكامل.
 
 ### 11. كيف يمكن جعل Pipeline يتعامل مع ملايين السجلات؟
 باستخدام المعالجة على دفعات، القراءة الجزئية، قواعد بيانات مناسبة، parallelism عند الحاجة، ومراقبة الذاكرة والأداء.
@@ -227,7 +173,11 @@ Batch يعالج مجموعة من البيانات على دفعات، بينم
 
 لأن كل مصدر قد يحتوي على اختلافات في schema وdata types وformatting. لذلك يمكن أن توجد source-specific cleaning functions، ثم يتم توحيد البيانات قبل مرحلة integration.
 
+### 13. لماذا لا نضع MongoDB credentials مباشرة في الكود؟
+لأسباب أمنية وللفصل بين configuration وsource code. يتم استخدام environment variables مثل `MONGO_URI` حتى لا تظهر بيانات الاتصال الحساسة في Git أو GitHub.
+
+### 14. لماذا يمكن أن يكون تنظيف Web Scraping مختلفًا عن تنظيف MongoDB؟
+لأن كل مصدر قد يحتوي على اختلافات في schema وdata types وformatting. لذلك توجد source-specific cleaning functions، ثم يتم توحيد البيانات قبل مرحلة integration.
+
 ## Design Notes
-The implementation keeps source extraction, validation, transformation, integration and output responsibilities separated so that an additional source can be introduced without rewriting the entire pipeline.
-
-
+Source extraction, validation, transformation, integration, ML preparation and output are separate modules, so an additional source can be introduced without rewriting the pipeline.
