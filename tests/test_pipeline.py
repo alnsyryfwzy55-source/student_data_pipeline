@@ -6,6 +6,7 @@ from app.sources.api_source import extract_api
 from app.sources.database_source import extract_database
 from app.validation.quality import validate_student_source
 from app.transformation.integration import integrate_data
+from app.transformation.cleaner import clean_students
 
 BASE = Path(__file__).resolve().parents[1]
 
@@ -30,7 +31,9 @@ def test_duplicates_removed():
 def test_missing_values_handled():
     raw = extract_csv(BASE / "data/raw/students.csv")
     valid, _ = validate_student_source(raw)
-    assert valid["age"].isna().any()
+    assert valid["age"].isna().any()  # kept by validation, imputed by cleaning
+    cleaned = clean_students(valid)
+    assert cleaned["age"].notna().all()
 
 def test_invalid_records_rejected():
     raw = extract_csv(BASE / "data/raw/students.csv")
@@ -52,7 +55,13 @@ def test_integration():
     assert len(result) == 1
     assert result.iloc[0]["student_id"] == 1
 
-def test_final_dataset_created():
+def test_final_dataset_created(tmp_path):
     from main import run_pipeline
-    run_pipeline()
-    assert (BASE / "data/processed/final_dataset.csv").exists()
+    before = (BASE / "data/processed").exists()
+    final, rejected = run_pipeline(out_base=tmp_path)
+    assert (tmp_path / "data/processed/final_dataset.csv").exists()
+    assert (tmp_path / "data/ml/ml_ready_dataset.csv").exists()
+    assert (tmp_path / "data/ml/feature_schema.json").exists()
+    assert list(rejected.columns) == ["student_id", "source", "error_reason"]
+    assert len(final) > 0
+    assert before == (BASE / "data/processed").exists()  # repo outputs untouched

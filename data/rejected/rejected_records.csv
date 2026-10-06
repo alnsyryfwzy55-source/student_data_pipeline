@@ -1,6 +1,0 @@
-student_id,error_reason
-1004,Duplicate student_id
-1005,Invalid Age
-1010,Invalid Age
-1005,Invalid GPA
-1007,Invalid Attendance

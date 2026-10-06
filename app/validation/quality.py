@@ -62,7 +62,11 @@ def validate_api_source(df: pd.DataFrame):
     for idx in work.index[bad_att]:
         rejected.append((work.loc[idx, "student_id"], "Invalid Attendance"))
 
-    invalid = bad_id | bad_gpa | bad_att
+    dup = _duplicates(work)
+    for idx in work.index[dup]:
+        rejected.append((work.loc[idx, "student_id"], "Duplicate student_id"))
+
+    invalid = bad_id | bad_gpa | bad_att | dup
     valid = work.loc[~invalid].copy()
     rejected_df = pd.DataFrame(rejected, columns=["student_id", "error_reason"])
     return valid, rejected_df
@@ -78,16 +82,39 @@ def validate_database_source(df: pd.DataFrame):
     })
     return work.loc[~bad_score].copy(), rejected
 
+FINAL_RULES = [
+    ("student_id", lambda d: d["student_id"].notna(), "Missing student_id"),
+    ("age", lambda d: d["age"].between(16, 80), "Final check: invalid or missing age"),
+    ("gpa", lambda d: d["gpa"].between(0, 4), "Final check: invalid or missing gpa"),
+    ("attendance", lambda d: d["attendance"].between(0, 100),
+     "Final check: invalid or missing attendance"),
+    ("score", lambda d: d["score"].between(0, 100),
+     "Final check: invalid or missing score"),
+]
+
+
+def split_final_data(df: pd.DataFrame):
+    """Final gate: return (valid rows, rejected rows with reasons)."""
+    reasons = pd.Series("", index=df.index)
+    for _, rule, message in FINAL_RULES:
+        failed = ~rule(df).fillna(False).astype(bool)
+        reasons = reasons.where(~failed | (reasons != ""), message)
+    bad = reasons != ""
+    rejected = pd.DataFrame({
+        "student_id": df.loc[bad, "student_id"],
+        "error_reason": reasons[bad],
+    })
+    return df.loc[~bad].copy(), rejected.reset_index(drop=True)
+
+
 def validate_final_data(df: pd.DataFrame) -> pd.DataFrame:
-    """Final gate: keep only records satisfying required range constraints."""
-    checks = (
-        df["student_id"].notna()
-        & df["age"].between(16, 80)
-        & df["gpa"].between(0, 4)
-        & df["attendance"].between(0, 100)
-        & df["score"].between(0, 100)
-    )
-    return df.loc[checks].copy()
+    return split_final_data(df)[0]
+
+
+def _duplicates(work: pd.DataFrame):
+    """Mask of repeated student_id values (first occurrence is kept)."""
+    return work["student_id"].duplicated(keep="first") & work["student_id"].notna()
+
 
 def validate_mongodb_source(df: pd.DataFrame):
     work = df.copy()
@@ -128,8 +155,14 @@ def validate_mongodb_source(df: pd.DataFrame):
     else:
         bad_hours = False
 
+    dup = _duplicates(work)
+
     rejected = pd.DataFrame(
         [
+            *[
+                (work.loc[i, "student_id"], "Duplicate student_id")
+                for i in work.index[dup]
+            ],
             *[
                 (
                     work.loc[i, "student_id"],
@@ -152,32 +185,26 @@ def validate_mongodb_source(df: pd.DataFrame):
     )
 
     return (
-        work.loc[~(bad_id | bad_hours)].copy(),
+        work.loc[~(bad_id | bad_hours | dup)].copy(),
         rejected,
     )
 
 
 def validate_web_source(df: pd.DataFrame):
     work = df.copy()
-
-    work["student_id"] = pd.to_numeric(
-        work["student_id"],
-        errors="coerce",
-    )
+    work["student_id"] = pd.to_numeric(work["student_id"], errors="coerce")
 
     bad_id = work["student_id"].isna()
+    dup = _duplicates(work)
 
-    rejected = pd.DataFrame(
-        {
-            "student_id": work.loc[
-                bad_id,
-                "student_id",
-            ],
+    rejected = pd.concat([
+        pd.DataFrame({
+            "student_id": work.loc[bad_id, "student_id"],
             "error_reason": "Missing/Invalid student_id",
-        }
-    )
-
-    return (
-        work.loc[~bad_id].copy(),
-        rejected,
-    )
+        }),
+        pd.DataFrame({
+            "student_id": work.loc[dup, "student_id"],
+            "error_reason": "Duplicate student_id",
+        }),
+    ], ignore_index=True)
+    return work.loc[~(bad_id | dup)].copy(), rejected
