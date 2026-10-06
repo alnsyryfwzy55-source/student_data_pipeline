@@ -1,45 +1,76 @@
 # Student Data Pipeline
 
 ## Project Overview
-A Python Data Engineering ETL/Integration pipeline that combines student data from:
+A Python Data Engineering ETL/Integration pipeline that combines student data from multiple heterogeneous sources:
+
 1. CSV
-2. REST API (with a local JSON mock fallback)
+2. REST API / JSON
 3. SQLite
+4. MongoDB
+5. Web Scraping
 
 The pipeline extracts, validates, cleans, integrates, transforms, performs final validation, and loads the final dataset.
 
 ## Architecture
-```text
-CSV ───────┐
-API ───────┼──> Extract -> Validate -> Clean -> Integrate -> Transform
-SQLite ────┘                                      |
-                                                   v
-                                           Final Validation
-                                             /          \
-                                            v            v
-                                 final_dataset.csv  rejected_records.csv
-```
+CSV ───────────────┐
+REST API / JSON ───┤
+SQLite ────────────┤
+MongoDB ───────────┤
+Web Scraping ──────┘
+          |
+          v
+       Extract
+          |
+          v
+       Validate
+          |
+          v
+         Clean
+          |
+          v
+       Integrate
+          |
+          v
+       Transform
+          |
+          v
+   Final Validation
+       /       \
+      v         v
+ Valid Data   Rejected Data
+     |             |
+     v             v
+final_dataset  rejected_records
 
 ## Project Structure
-```text
 student_data_pipeline/
 ├── app/
 │   ├── sources/
+│   │   ├── api_source.py
+│   │   ├── mongodb_source.py
+│   │   ├── web_scraper_source.py
+│   │   └── ...
 │   ├── transformation/
 │   ├── validation/
 │   ├── output/
 │   └── utils/
 ├── data/
 │   ├── raw/
+│   │   ├── students.csv
+│   │   ├── api_mock.json
+│   │   ├── mongodb_students.json
+│   │   └── students_web.html
 │   ├── processed/
 │   └── rejected/
 ├── database/
+├── scripts/
+│   └── seed_mongodb.py
 ├── tests/
 ├── logs/
 ├── main.py
 ├── requirements.txt
+├── .gitignore
 └── README.md
-```
 
 ## Data Sources
 ### CSV
@@ -51,6 +82,33 @@ For offline/reproducible execution, the project includes `data/raw/api_mock.json
 
 ### SQLite
 `database/students.db` contains `courses` and `enrollments`. Data is extracted using SQL JOIN.
+
+### MongoDB
+
+`app/sources/mongodb_source.py` extracts student documents from a MongoDB collection using `pymongo`.
+
+MongoDB connection settings are read from environment variables:
+
+- `MONGO_URI`
+- `MONGO_DATABASE`
+- `MONGO_COLLECTION`
+
+The MongoDB source provides additional student attributes such as `credit_hours` and `enrollment_status`.
+
+MongoDB credentials and connection strings are not stored in the source code.
+
+### Web Scraping
+
+`app/sources/web_scraper_source.py` extracts student data from an HTML table using `requests` and `BeautifulSoup`.
+
+The scraper supports both:
+
+- A real web URL.
+- A local HTML fixture for offline and reproducible testing.
+
+The local fixture is stored in:
+
+`data/raw/students_web.html`
 
 ## ETL Pipeline
 - **Extract:** read CSV, request JSON API, query SQLite.
@@ -75,6 +133,18 @@ For offline/reproducible execution, the project includes `data/raw/api_mock.json
 - Missing GPA: median of available valid GPA values from the API source.
 - Missing attendance is not silently fabricated; a missing attendance value cannot pass final validation.
 
+## MongoDB Configuration
+
+MongoDB configuration is provided through environment variables.
+
+Example:
+
+```text
+MONGO_URI=mongodb://localhost:27017
+MONGO_DATABASE=student_pipeline
+MONGO_COLLECTION=students
+
+```
 ## Installation
 ```bash
 python -m venv .venv
@@ -128,9 +198,20 @@ Extract استخراج البيانات من المصادر، Transform تحوي
 
 ### 9. لماذا يعتبر Validation Data جزءًا أساسيًا من هندسة البيانات؟
 لأن جودة البيانات الداخلة تؤثر مباشرة على صحة التحليل والنماذج والقرارات المبنية عليها.
+## Web Scraping
+
+The web scraper can operate against a real URL or a local HTML fixture.
+
+For reproducible offline testing, the project uses:
+
+```text
+data/raw/students_web.html
+```
 
 ### 10. كيف يمكن تطوير Pipeline ليعمل بشكل دوري وآلي؟
 يمكن تشغيله بواسطة scheduler مثل cron أو Windows Task Scheduler أو نظام orchestration.
+
+حتى تبقى مسؤولية كل طبقة واضحة. يمكن إضافة مصدر جديد مثل MongoDB أو Web Scraping دون إعادة كتابة منطق التنظيف والتحويل والتكامل بالكامل.
 
 ### 11. كيف يمكن جعل Pipeline يتعامل مع ملايين السجلات؟
 باستخدام المعالجة على دفعات، القراءة الجزئية، قواعد بيانات مناسبة، parallelism عند الحاجة، ومراقبة الذاكرة والأداء.
@@ -138,5 +219,15 @@ Extract استخراج البيانات من المصادر، Transform تحوي
 ### 12. ما الفرق بين Processing Batch وProcessing Streaming؟
 Batch يعالج مجموعة من البيانات على دفعات، بينما Streaming يعالج البيانات أثناء وصولها بصورة مستمرة أو شبه فورية.
 
+### 13. لماذا لا نضع MongoDB credentials مباشرة في الكود؟
+
+لأسباب أمنية وللفصل بين configuration وsource code. يتم استخدام environment variables مثل `MONGO_URI` حتى لا تظهر بيانات الاتصال الحساسة في Git أو GitHub.
+
+### 14. لماذا يمكن أن يكون تنظيف Web Scraping مختلفًا عن تنظيف MongoDB؟
+
+لأن كل مصدر قد يحتوي على اختلافات في schema وdata types وformatting. لذلك يمكن أن توجد source-specific cleaning functions، ثم يتم توحيد البيانات قبل مرحلة integration.
+
 ## Design Notes
 The implementation keeps source extraction, validation, transformation, integration and output responsibilities separated so that an additional source can be introduced without rewriting the entire pipeline.
+
+

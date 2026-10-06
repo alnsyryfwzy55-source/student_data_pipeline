@@ -26,3 +26,64 @@ def clean_api(df: pd.DataFrame) -> pd.DataFrame:
         work["gpa"] = work["gpa"].fillna(work["gpa"].median())
     work["status"] = work["status"].astype("string").str.strip().str.title()
     return work
+
+def clean_mongodb(df: pd.DataFrame) -> pd.DataFrame:
+    work = df.copy()
+
+    work.columns = (
+        work.columns
+        .str.strip()
+        .str.lower()
+        .str.replace(" ", "_", regex=False)
+    )
+
+    for col in ["student_id", "credit_hours"]:
+        if col in work:
+            work[col] = pd.to_numeric(
+                work[col],
+                errors="coerce",
+            )
+
+    if "enrollment_status" in work:
+        work["enrollment_status"] = (
+            work["enrollment_status"]
+            .astype("string")
+            .str.strip()
+            .str.title()
+        )
+
+    return work
+
+
+def clean_web(df: pd.DataFrame) -> pd.DataFrame:
+    work = df.copy()
+
+    work.columns = (
+        work.columns
+        .str.strip()
+        .str.lower()
+        .str.replace(" ", "_", regex=False)
+    )
+
+    work["student_id"] = pd.to_numeric(
+        work["student_id"],
+        errors="coerce",
+    )
+
+    if "scholarship" in work:
+        work["scholarship"] = (
+            work["scholarship"]
+            .astype("string")
+            .str.strip()
+            .str.lower()
+            .map(
+                {
+                    "yes": True,
+                    "no": False,
+                    "true": True,
+                    "false": False,
+                }
+            )
+        )
+
+    return work

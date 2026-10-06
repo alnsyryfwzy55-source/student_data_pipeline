@@ -2,3 +2,20 @@ __pycache__/
 *.pyc
 .venv/
 .pytest_cache/
+
+# Environment variables and secrets
+.env
+.env.*
+!.env.example
+
+# Logs
+logs/*.log
+
+# Generated pipeline outputs
+data/processed/*
+data/rejected/*
+
+# Local MongoDB / database files
+mongodb_data/
+
+scripts/

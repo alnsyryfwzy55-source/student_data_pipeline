@@ -88,3 +88,96 @@ def validate_final_data(df: pd.DataFrame) -> pd.DataFrame:
         & df["score"].between(0, 100)
     )
     return df.loc[checks].copy()
+
+def validate_mongodb_source(df: pd.DataFrame):
+    work = df.copy()
+
+    if work.empty:
+        return (
+            pd.DataFrame(columns=work.columns),
+            pd.DataFrame(columns=["student_id", "error_reason"]),
+        )
+
+    if "student_id" not in work.columns:
+        rejected = pd.DataFrame(
+            {
+                "student_id": [None] * len(work),
+                "error_reason": ["Missing student_id"] * len(work),
+            },
+        )
+        return pd.DataFrame(columns=work.columns), rejected.reset_index(drop=True)
+
+    work["student_id"] = pd.to_numeric(
+        work["student_id"],
+        errors="coerce",
+    )
+
+    if "credit_hours" in work:
+        work["credit_hours"] = pd.to_numeric(
+            work["credit_hours"],
+            errors="coerce",
+        )
+
+    bad_id = work["student_id"].isna()
+
+    if "credit_hours" in work:
+        bad_hours = (
+            work["credit_hours"].notna()
+            & ~work["credit_hours"].between(0, 30)
+        )
+    else:
+        bad_hours = False
+
+    rejected = pd.DataFrame(
+        [
+            *[
+                (
+                    work.loc[i, "student_id"],
+                    "Missing/Invalid student_id",
+                )
+                for i in work.index[bad_id]
+            ],
+            *[
+                (
+                    work.loc[i, "student_id"],
+                    "Invalid credit_hours",
+                )
+                for i in work.index[bad_hours]
+            ],
+        ],
+        columns=[
+            "student_id",
+            "error_reason",
+        ],
+    )
+
+    return (
+        work.loc[~(bad_id | bad_hours)].copy(),
+        rejected,
+    )
+
+
+def validate_web_source(df: pd.DataFrame):
+    work = df.copy()
+
+    work["student_id"] = pd.to_numeric(
+        work["student_id"],
+        errors="coerce",
+    )
+
+    bad_id = work["student_id"].isna()
+
+    rejected = pd.DataFrame(
+        {
+            "student_id": work.loc[
+                bad_id,
+                "student_id",
+            ],
+            "error_reason": "Missing/Invalid student_id",
+        }
+    )
+
+    return (
+        work.loc[~bad_id].copy(),
+        rejected,
+    )

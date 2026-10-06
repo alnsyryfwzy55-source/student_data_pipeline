@@ -1,0 +1,47 @@
+[
+  {
+    "student_id": 1001,
+    "credit_hours": 15,
+    "enrollment_status": "Active"
+  },
+  {
+    "student_id": 1002,
+    "credit_hours": 18,
+    "enrollment_status": "Active"
+  },
+  {
+    "student_id": 1003,
+    "credit_hours": 12,
+    "enrollment_status": "Active"
+  },
+  {
+    "student_id": 1004,
+    "credit_hours": 16,
+    "enrollment_status": "Active"
+  },
+  {
+    "student_id": 1006,
+    "credit_hours": 14,
+    "enrollment_status": "Active"
+  },
+  {
+    "student_id": 1007,
+    "credit_hours": 10,
+    "enrollment_status": "Probation"
+  },
+  {
+    "student_id": 1008,
+    "credit_hours": 13,
+    "enrollment_status": "Probation"
+  },
+  {
+    "student_id": 1009,
+    "credit_hours": 15,
+    "enrollment_status": "Active"
+  },
+  {
+    "student_id": 1010,
+    "credit_hours": 17,
+    "enrollment_status": "Active"
+  }
+]
